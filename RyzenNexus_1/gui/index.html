@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ryzen Nexus: ANALYTICS CORE</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #050505;
+            color: #ffffff;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .dashboard {
+            background: #0f0f0f;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            border: 1px solid #333;
+            width: 850px;
+            box-shadow: 0 0 100px rgba(255, 75, 31, 0.1);
+            position: relative;
+            z-index: 1;
+        }
+        h1 { margin: 0; color: #fff; font-weight: 800; letter-spacing: 2px; font-size: 32px; font-style: italic; }
+        .subtitle { color: #ff4b1f; font-size: 0.9em; margin-bottom: 25px; letter-spacing: 4px; text-transform: uppercase; }
+        
+        .stat-grid {
+            display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 25px;
+        }
+        .stat-box {
+            background: #181818; padding: 12px; border-radius: 10px; border: 1px solid #222;
+        }
+        .value { font-size: 1.3em; font-weight: bold; color: #fff; transition: 0.3s; }
+        .value-boost { color: #2ecc71; text-shadow: 0 0 10px rgba(46, 204, 113, 0.3); }
+        .label { color: #666; font-size: 0.55em; font-weight: bold; text-transform: uppercase; margin-top: 5px; }
+
+        .chart-container {
+            background: #111; border: 1px solid #222; border-radius: 8px; margin-bottom: 20px; padding: 10px; height: 180px;
+        }
+
+        .process-bar {
+            background: #111; padding: 10px; border-radius: 8px; border: 1px solid #333; margin-bottom: 20px;
+            font-family: 'Consolas', monospace; color: #aaa; font-size: 0.9em;
+        }
+        .proc-active { color: #ff4b1f; font-weight: bold; text-transform: uppercase; }
+
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+
+        .btn {
+            padding: 15px; font-size: 1.1em; font-weight: bold; color: white; border: none; border-radius: 8px;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: 0.2s;
+        }
+        .btn-boost { background: linear-gradient(135deg, #ff4b1f 0%, #ff9068 100%); }
+        .btn-boost:hover { filter: brightness(1.1); }
+        .btn-history { background: #222; border: 1px solid #444; }
+        .btn-history:hover { background: #333; border-color: #fff; }
+
+        .terminal {
+            background: #000; border: 1px solid #222; border-radius: 8px; padding: 15px; height: 80px;
+            text-align: left; font-family: 'Consolas', monospace; font-size: 0.8em; color: #aaa; overflow-y: auto;
+        }
+        .log-success { color: #2ecc71; }
+
+        .modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 100; align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background: #111; padding: 30px; border-radius: 15px; width: 80%; height: 60%;
+            border: 1px solid #333; position: relative;
+        }
+        .close-btn {
+            position: absolute; top: 15px; right: 20px; color: #fff; font-size: 24px; cursor: pointer;
+        }
+        .close-btn:hover { color: #ff4b1f; }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+        <h1>RYZEN NEXUS</h1>
+        <div class="subtitle">Performance Engine</div>
+        
+        <div class="stat-grid">
+            <div class="stat-box">
+                <div class="value" id="cores-val" style="color: #ff9f43;">--</div>
+                <div class="label">Logical Cores</div>
+            </div>
+            <div class="stat-box"><div class="value" id="cpu-val">--%</div><div class="label">CPU Usage</div></div>
+            <div class="stat-box"><div class="value" id="ram-val">--%</div><div class="label">RAM Usage</div></div>
+            <div class="stat-box"><div class="value" id="disk-val">--%</div><div class="label">Disk Load</div></div>
+            <div class="stat-box"><div class="value" id="net-val">--</div><div class="label">Net KB/s</div></div>
+            <div class="stat-box"><div class="value value-boost" id="fps-val">--</div><div class="label">Avg FPS</div></div>
+            <div class="stat-box"><div class="value" id="dip-val" style="color: #00a2ff;">--</div><div class="label">Reduced Dip</div></div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="smoothnessChart"></canvas>
+        </div>
+
+        <div class="process-bar">
+            DETECTED TARGET: <span id="proc-name" class="proc-active">SCANNING...</span>
+        </div>
+
+        <div class="btn-grid">
+            <button class="btn btn-boost" id="boost-btn" onclick="activateBoost()">🚀 OPTIMIZE CORES</button>
+            <button class="btn btn-history" onclick="openHistory()">📊 VIEW DATA LOGS</button>
+        </div>
+
+        <div class="terminal" id="terminal">
+            > HARDWARE TELEMETRY INITIALIZED.<br>> READY FOR COMMAND...
+        </div>
+    </div>
+
+    <div class="modal" id="historyModal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeHistory()">&times;</span>
+            <h2 style="margin-top:0; color:#ff4b1f;">PERFORMANCE HISTORY (Last 50 Sessions)</h2>
+            <div style="height: 400px;">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- SMOOTHNESS CHART SETUP ---
+        const sCtx = document.getElementById('smoothnessChart').getContext('2d');
+        const smoothnessChart = new Chart(sCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Hardware FPS', borderColor: '#2ed573', data: [], tension: 0.3, fill: false, pointRadius: 0 },
+                    // NEW: Blue Line for Unoptimized Expected Dip
+                    { label: 'Expected Dip (Unoptimized)', borderColor: '#00a2ff', data: [], tension: 0.3, fill: false, borderDash: [5, 5], pointRadius: 0 },
+                    // NEW: Dashed Red Line for Optimized Reduced Dip
+                    { label: 'Reduced Dip (AI)', borderColor: '#ff4757', data: [], tension: 0.3, fill: false, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true, 
+                maintainAspectRatio: false,
+                animation: false, 
+                scales: { 
+                    x: { display: false },
+                    y: { beginAtZero: false, grid: { color: '#222' }, ticks: { color: '#666' } }
+                },
+                plugins: { legend: { labels: { color: '#aaa', font: { size: 10 } } } }
+            }
+        });
+
+        // --- LIVE STATS LOOP ---
+        setInterval(async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:5000/live-stats');
+                const data = await res.json();
+                
+                document.getElementById('cores-val').innerText = data.total_threads || "12";
+                document.getElementById('cpu-val').innerText = data.cpu + "%";
+                document.getElementById('ram-val').innerText = data.ram + "%";
+                document.getElementById('disk-val').innerText = data.disk + "%";
+                document.getElementById('net-val').innerText = data.net_recv;
+                document.getElementById('fps-val').innerText = data.fps;
+                
+                const dipElement = document.getElementById('dip-val');
+                dipElement.innerText = data.one_percent_low;
+                
+                // Keep Reduced Dip badge blue
+                dipElement.style.color = "#00a2ff";
+                
+                const procSpan = document.getElementById('proc-name');
+                procSpan.innerText = data.top_process;
+                procSpan.style.color = data.game_active ? "#ff4b1f" : "#666";
+
+                const now = new Date().toLocaleTimeString();
+                smoothnessChart.data.labels.push(now);
+                
+                // Dataset 0: Green Line (FPS)
+                smoothnessChart.data.datasets[0].data.push(data.fps);
+                // Dataset 1: Blue Line (Reduced Dip from server data)
+                smoothnessChart.data.datasets[1].data.push(data.one_percent_low); 
+                // Dataset 2: Red Line (Expected Baseline from server data)
+                smoothnessChart.data.datasets[2].data.push(data.expected_low);
+
+                if (smoothnessChart.data.labels.length > 40) { 
+                    smoothnessChart.data.labels.shift();
+                    smoothnessChart.data.datasets[0].data.shift();
+                    smoothnessChart.data.datasets[1].data.shift();
+                    smoothnessChart.data.datasets[2].data.shift();
+                }
+                smoothnessChart.update('none'); 
+
+            } catch (e) {}
+        }, 1000);
+
+        async function activateBoost() {
+            const btn = document.getElementById('boost-btn');
+            const term = document.getElementById('terminal');
+            term.innerHTML += `<br>> INITIATING HARDWARE CORE REMAPPING...`;
+            try {
+                const res = await fetch('http://127.0.0.1:5000/boost-fps');
+                const data = await res.json();
+                if (data.success) {
+                    btn.innerText = "⚡ CORES OPTIMIZED"; btn.style.background = "#2ecc71";
+                    data.logs.forEach(log => term.innerHTML += `<br><span class="log-success">> ${log}</span>`);
+                } else {
+                    term.innerHTML += `<br>> WARNING: No Target Detected. Hardware bypass engaged.`;
+                }
+                term.scrollTop = term.scrollHeight;
+            } catch (e) { term.innerHTML += `<br>> ERROR: Nexus Server Unreachable.`; }
+        }
+
+        let myChart = null;
+        async function openHistory() {
+            document.getElementById('historyModal').style.display = "flex";
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            const res = await fetch('http://127.0.0.1:5000/history');
+            const data = await res.json();
+            
+            if(data.history) {
+                const labels = data.history.map(d => d.time);
+                const cpuData = data.history.map(d => d.cpu);
+                const ramData = data.history.map(d => d.ram);
+                
+                if(myChart) myChart.destroy();
+                
+                const statsOverlay = {
+                    id: 'statsOverlay',
+                    afterDraw(chart) {
+                        const { ctx, chartArea: { top, right } } = chart;
+                        ctx.save();
+                        ctx.textAlign = 'right';
+                        ctx.textBaseline = 'top';
+                        
+                        ctx.font = 'bold 13px "Consolas", monospace';
+                        ctx.fillStyle = '#2ecc71';
+                        ctx.fillText(`TARGET: ${data.game_name} (${data.game_cpu}%)`, right - 75, top - 30);
+                        
+                        ctx.font = '12px "Segoe UI", sans-serif';
+                        ctx.fillStyle = '#ff4757';
+                        ctx.fillText(`BG APPS ACTIVE: ${data.bg_count}`, right - 200, top - 15);
+                        ctx.fillText(`|`,right - 166.25, top - 15);
+                        
+                        ctx.fillText(`TOTAL BG LOAD: ${data.bg_cpu}%`, right - 10, top - 15);
+                        
+                        ctx.restore();
+                    }
+                };
+
+                myChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'CPU Usage', data: cpuData, borderColor: '#ff4b1f', tension: 0.4, pointRadius: 2 },
+                            { label: 'RAM Usage', data: ramData, borderColor: '#3498db', tension: 0.4, pointRadius: 2 }
+                        ]
+                    },
+                    options: {
+                        responsive: true, 
+                        maintainAspectRatio: false,
+                        scales: { 
+                            y: { 
+                                beginAtZero: true, 
+                                max: 100, 
+                                grid: { color: '#222' }, 
+                                ticks: { color: '#666' } 
+                            },
+                            x: { grid: { display: false }, ticks: { color: '#666' } }
+                        },
+                        plugins: {
+                            legend: { labels: { color: '#aaa' } }
+                        }
+                    },
+                    plugins: [statsOverlay]
+                });
+            }
+        }
+        function closeHistory() { document.getElementById('historyModal').style.display = "none"; }
+    </script>
+</body>
+</html>
