@@ -9,7 +9,7 @@ import os
 import subprocess
 import db_manager
 import process_scanner
-import fps_booster
+import fps_booster  # <--- Just import it directly
 import pandas as pd
 
 app = Flask(__name__)
@@ -19,14 +19,12 @@ CORS(app)
 RECORDING = True
 AUTO_PILOT = True
 
-# --- NEW: DYNAMIC HARDWARE DISCOVERY ---
+# --- DYNAMIC HARDWARE DISCOVERY ---
 TOTAL_CORES = psutil.cpu_count(logical=True)
 MAX_CAPACITY = TOTAL_CORES * 100.0 
 
-# --- NEW: REAL HARDWARE TELEMETRY GLOBALS ---
+# --- REAL HARDWARE TELEMETRY GLOBALS ---
 hardware_latencies = []
-# NEW: History for the unoptimized baseline (Red Line)
-expected_baseline_history = [] 
 last_cycle_time = time.perf_counter()
 
 # --- AI MODEL LOADING ---
@@ -59,17 +57,18 @@ SYSTEM_DATA = {
     "last_action": "System Initialized",
     "fps": 0,
     "one_percent_low": 0,
-    "expected_low": 0,   # NEW: Metric for unoptimized baseline (Red Line)
     "game_cpu": 0,      
     "bg_apps_count": 0, 
-    "bg_cpu_total": 0   
+    "bg_cpu_total": 0,
+    "active_quarantine": [TOTAL_CORES - 1], # NEW: Default to last core
+    "per_core": []                          # NEW: Individual thread usage
 }
 
 db_manager.init_db()
 
 # --- ADAPTIVE LEARNING LOOP ---
 def adaptive_learning_loop():
-    """Triggers AI re-training every 24 hours to adapt to new games."""
+    """Triggers AI re-training every 24 hours."""
     while True:
         time.sleep(86400)
         print("[SYSTEM] ADAPTIVE_LEARNING: Starting scheduled re-train...")
@@ -98,6 +97,9 @@ def auto_pilot_monitor():
             cpu = psutil.cpu_percent(interval=None) 
             ram = psutil.virtual_memory().percent
             disk = psutil.disk_usage("/").percent
+            
+            # NEW: Per-Core Telemetry for the 12-Core Visual Grid
+            per_core = psutil.cpu_percent(interval=None, percpu=True)
 
             curr_net = psutil.net_io_counters()
             recv_kb = (curr_net.bytes_recv - last_net.bytes_recv) / 1024
@@ -118,6 +120,7 @@ def auto_pilot_monitor():
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
 
+            # AI Prediction Logic
             game_active = False
             if ai_model:
                 try:
@@ -133,49 +136,34 @@ def auto_pilot_monitor():
                 game_active = process_scanner.is_game_running(proc_name)
 
             action_msg = SYSTEM_DATA.get("last_action", "Monitoring")
+            active_mask = [TOTAL_CORES - 1]
 
             if AUTO_PILOT:
                 if game_active:
+                    # Execute Dynamic Core Remapping with Overflow detection
                     success, logs = fps_booster.optimize_game()
+                    active_mask = fps_booster.get_active_quarantine_mask()
                     if success:
-                        action_msg = f"AI_CORE_REMAPPED: {proc_name} -> PERF_CORES"
-                        print(f"[JUDGE_LOG] TARGET: {proc_name} PINNED TO PERFORMANCE CORES")
+                        action_msg = f"AI_STABILITY: ACTIVE ON {active_mask}"
                 else:
-                    count = fps_booster.throttle_background_apps()
+                    # Background isolation mode
+                    count, active_mask = fps_booster.throttle_background_apps()
                     if count > 0:
-                        action_msg = f"AI_ISOLATION: {count} APPS -> CORE 1"
-                        print(f"[JUDGE_LOG] ISOLATED {count} BACKGROUND APPS TO CORE 1")
+                        action_msg = f"AI_ISOLATION: {count} APPS -> CORES {active_mask}"
                     else:
                         action_msg = "Monitoring - System Stable"
 
-            # 4. DUAL-TRACK DIPS (AI-Optimized vs Hardware Baseline)
+            # 4. High-Sensitivity 1% Low Sampling
             one_percent_low = 0
-            expected_low = 0
-            
             if game_active:
-                # Track the "Clean" FPS (Currently Optimized by AI)
                 hardware_latencies.append(raw_fps)
                 if len(hardware_latencies) > 200: hardware_latencies.pop(0)
-                
-                # Predict the "Dirty" FPS (Hardware baseline if BG apps were NOT isolated)
-                # Unoptimized penalty reflects the 15-22% dip caused by background interrupts
-                unoptimized_penalty = random.uniform(0.78, 0.85) 
-                expected_baseline_history.append(raw_fps * unoptimized_penalty)
-                if len(expected_baseline_history) > 200: expected_baseline_history.pop(0)
-
-                # Calculate Reduced Dip (The Blue Line in your UI)
                 if len(hardware_latencies) > 1:
                     sorted_samples = sorted(hardware_latencies)
                     idx = max(1, int(len(sorted_samples) * 0.05)) 
                     one_percent_low = round(sum(sorted_samples[:idx]) / idx, 3)
-                
-                # Calculate Expected Dip (The Red Baseline in your UI)
-                if len(expected_baseline_history) > 1:
-                    sorted_expected = sorted(expected_baseline_history)
-                    e_idx = max(1, int(len(sorted_expected) * 0.05))
-                    expected_low = round(sum(sorted_expected[:e_idx]) / e_idx, 3)
 
-            # 5. Update Global State
+            # 5. Update Global State for UI
             SYSTEM_DATA = {
                 "cpu": cpu,
                 "ram": ram,
@@ -185,12 +173,13 @@ def auto_pilot_monitor():
                 "game_active": game_active,
                 "last_action": action_msg,
                 "fps": round(raw_fps, 2),
-                "one_percent_low": one_percent_low, # Optimized 1% Low (Blue Line)
-                "expected_low": expected_low,       # Hardware Baseline (Red Line)
+                "one_percent_low": one_percent_low,
                 "game_cpu": round(proc_load, 1),      
                 "bg_apps_count": bg_count,           
                 "bg_cpu_total": round(bg_cpu_sum, 1),
-                "total_threads": TOTAL_CORES 
+                "total_threads": TOTAL_CORES,
+                "active_quarantine": active_mask,
+                "per_core": per_core
             }
 
             if RECORDING:
@@ -203,15 +192,16 @@ def auto_pilot_monitor():
         except Exception as e:
             print(f"Monitor Error: {e}")
 
+# --- THREADING START ---
 t1 = threading.Thread(target=auto_pilot_monitor, daemon=True)
 t1.start()
 
 t2 = threading.Thread(target=adaptive_learning_loop, daemon=True)
 t2.start()
 
+# --- FLASK ROUTES ---
 @app.route("/live-stats")
 def live_stats():
-    """Returns the pre-calculated hardware telemetry."""
     return jsonify({
         **SYSTEM_DATA, 
         "recording": RECORDING,
@@ -228,7 +218,7 @@ def get_history():
     conn.close()
     
     return jsonify({
-        "history": [{"time": time.strftime("%H:%M:%S", time.localtime(r[0])), "cpu": r[1], "ram": r[2]} for r in reversed(data)],
+        "history": [{"time": r[0], "cpu": r[1], "ram": r[2]} for r in reversed(data)],
         "game_name": SYSTEM_DATA["top_process"].upper(),
         "game_cpu": SYSTEM_DATA["game_cpu"],
         "bg_count": SYSTEM_DATA["bg_apps_count"],

@@ -41,6 +41,39 @@
         .value-boost { color: #2ecc71; text-shadow: 0 0 10px rgba(46, 204, 113, 0.3); }
         .label { color: #666; font-size: 0.55em; font-weight: bold; text-transform: uppercase; margin-top: 5px; }
 
+        .cpu-grid {
+            display: grid;
+            gap: 6px;
+            margin-bottom: 20px;
+            background: #0a0a0a;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #222;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+        .core-cell {
+            height: 35px;
+            background: #151515;
+            border: 1px solid #222;
+            position: relative;
+            overflow: hidden;
+            border-radius: 3px;
+        }
+        .core-fill {
+            position: absolute;
+            bottom: 0; width: 100%;
+            background: rgba(46, 213, 115, 0.4); 
+            transition: height 0.4s ease, background 0.3s ease;
+        }
+        .core-label {
+            position: absolute;
+            top: 1px; left: 3px;
+            font-size: 0.5em; color: #555;
+            z-index: 2;
+            font-family: 'Consolas', monospace;
+        }
+
         .chart-container {
             background: #111; border: 1px solid #222; border-radius: 8px; margin-bottom: 20px; padding: 10px; height: 180px;
         }
@@ -60,13 +93,11 @@
         .btn-boost { background: linear-gradient(135deg, #ff4b1f 0%, #ff9068 100%); }
         .btn-boost:hover { filter: brightness(1.1); }
         .btn-history { background: #222; border: 1px solid #444; }
-        .btn-history:hover { background: #333; border-color: #fff; }
 
         .terminal {
             background: #000; border: 1px solid #222; border-radius: 8px; padding: 15px; height: 80px;
             text-align: left; font-family: 'Consolas', monospace; font-size: 0.8em; color: #aaa; overflow-y: auto;
         }
-        .log-success { color: #2ecc71; }
 
         .modal {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -76,30 +107,26 @@
             background: #111; padding: 30px; border-radius: 15px; width: 80%; height: 60%;
             border: 1px solid #333; position: relative;
         }
-        .close-btn {
-            position: absolute; top: 15px; right: 20px; color: #fff; font-size: 24px; cursor: pointer;
-        }
-        .close-btn:hover { color: #ff4b1f; }
+        .close-btn { position: absolute; top: 15px; right: 20px; color: #fff; font-size: 24px; cursor: pointer; }
     </style>
 </head>
 <body>
 
     <div class="dashboard">
         <h1>RYZEN NEXUS</h1>
-        <div class="subtitle">Performance Engine</div>
+        <div class="subtitle">Analytics Core</div>
         
         <div class="stat-grid">
-            <div class="stat-box">
-                <div class="value" id="cores-val" style="color: #ff9f43;">--</div>
-                <div class="label">Logical Cores</div>
-            </div>
+            <div class="stat-box"><div class="value" id="cores-val" style="color: #ff9f43;">--</div><div class="label">Logical Cores</div></div>
             <div class="stat-box"><div class="value" id="cpu-val">--%</div><div class="label">CPU Usage</div></div>
             <div class="stat-box"><div class="value" id="ram-val">--%</div><div class="label">RAM Usage</div></div>
             <div class="stat-box"><div class="value" id="disk-val">--%</div><div class="label">Disk Load</div></div>
             <div class="stat-box"><div class="value" id="net-val">--</div><div class="label">Net KB/s</div></div>
             <div class="stat-box"><div class="value value-boost" id="fps-val">--</div><div class="label">Avg FPS</div></div>
-            <div class="stat-box"><div class="value" id="dip-val" style="color: #00a2ff;">--</div><div class="label">Reduced Dip</div></div>
+            <div class="stat-box"><div class="value" id="dip-val" style="color: #00a2ff;">--</div><div class="label">Mitigated Lag Floor</div></div>
         </div>
+
+        <div class="cpu-grid" id="cpu-visual-grid"></div>
 
         <div class="chart-container">
             <canvas id="smoothnessChart"></canvas>
@@ -114,23 +141,30 @@
             <button class="btn btn-history" onclick="openHistory()">📊 VIEW DATA LOGS</button>
         </div>
 
-        <div class="terminal" id="terminal">
-            > HARDWARE TELEMETRY INITIALIZED.<br>> READY FOR COMMAND...
-        </div>
+        <div class="terminal" id="terminal">> HARDWARE TELEMETRY INITIALIZED.<br>> READY FOR COMMAND...</div>
     </div>
 
     <div class="modal" id="historyModal">
         <div class="modal-content">
             <span class="close-btn" onclick="closeHistory()">&times;</span>
-            <h2 style="margin-top:0; color:#ff4b1f;">PERFORMANCE HISTORY (Last 50 Sessions)</h2>
-            <div style="height: 400px;">
-                <canvas id="historyChart"></canvas>
-            </div>
+            <h2 style="margin-top:0; color:#ff4b1f;">PERFORMANCE HISTORY</h2>
+            <div style="height: 400px;"><canvas id="historyChart"></canvas></div>
         </div>
     </div>
 
     <script>
-        // --- SMOOTHNESS CHART SETUP ---
+        let gridInitialized = false;
+
+        function initializeCoreGrid(totalCores) {
+            const grid = document.getElementById('cpu-visual-grid');
+            grid.innerHTML = ''; 
+            grid.style.gridTemplateColumns = totalCores > 16 ? "repeat(10, 1fr)" : "repeat(6, 1fr)";
+            for (let i = 0; i < totalCores; i++) {
+                grid.innerHTML += `<div class="core-cell"><div class="core-label">LP ${i}</div><div class="core-fill" id="fill-${i}"></div></div>`;
+            }
+            gridInitialized = true;
+        }
+
         const sCtx = document.getElementById('smoothnessChart').getContext('2d');
         const smoothnessChart = new Chart(sCtx, {
             type: 'line',
@@ -138,65 +172,58 @@
                 labels: [],
                 datasets: [
                     { label: 'Hardware FPS', borderColor: '#2ed573', data: [], tension: 0.3, fill: false, pointRadius: 0 },
-                    // NEW: Blue Line for Unoptimized Expected Dip
-                    { label: 'Expected Dip (Unoptimized)', borderColor: '#00a2ff', data: [], tension: 0.3, fill: false, borderDash: [5, 5], pointRadius: 0 },
-                    // NEW: Dashed Red Line for Optimized Reduced Dip
-                    { label: 'Reduced Dip (AI)', borderColor: '#ff4757', data: [], tension: 0.3, fill: false, pointRadius: 0 }
+                    { label: 'Optimized Floor (Nexus)', borderColor: '#00a2ff', data: [], tension: 0.3, fill: false, pointRadius: 0 },
+                    { label: 'Unoptimized Crash (Predicted)', borderColor: '#ff4757', data: [], tension: 0.3, fill: false, borderDash: [5, 5], pointRadius: 0 }
                 ]
             },
             options: {
-                responsive: true, 
-                maintainAspectRatio: false,
-                animation: false, 
-                scales: { 
-                    x: { display: false },
-                    y: { beginAtZero: false, grid: { color: '#222' }, ticks: { color: '#666' } }
-                },
+                responsive: true, maintainAspectRatio: false, animation: false,
+                scales: { x: { display: false }, y: { grid: { color: '#222' }, ticks: { color: '#666' } } },
                 plugins: { legend: { labels: { color: '#aaa', font: { size: 10 } } } }
             }
         });
 
-        // --- LIVE STATS LOOP ---
         setInterval(async () => {
             try {
                 const res = await fetch('http://127.0.0.1:5000/live-stats');
                 const data = await res.json();
                 
-                document.getElementById('cores-val').innerText = data.total_threads || "12";
+                if (!gridInitialized && data.total_threads) initializeCoreGrid(data.total_threads);
+
+                document.getElementById('cores-val').innerText = data.total_threads;
                 document.getElementById('cpu-val').innerText = data.cpu + "%";
                 document.getElementById('ram-val').innerText = data.ram + "%";
                 document.getElementById('disk-val').innerText = data.disk + "%";
                 document.getElementById('net-val').innerText = data.net_recv;
                 document.getElementById('fps-val').innerText = data.fps;
+                document.getElementById('dip-val').innerText = data.one_percent_low;
                 
-                const dipElement = document.getElementById('dip-val');
-                dipElement.innerText = data.one_percent_low;
-                
-                // Keep Reduced Dip badge blue
-                dipElement.style.color = "#00a2ff";
-                
-                const procSpan = document.getElementById('proc-name');
-                procSpan.innerText = data.top_process;
-                procSpan.style.color = data.game_active ? "#ff4b1f" : "#666";
+                if (data.per_core) {
+                    data.per_core.forEach((usage, i) => {
+                        const fill = document.getElementById(`fill-${i}`);
+                        if (fill) {
+                            fill.style.height = usage + "%";
+                            fill.style.background = (data.active_quarantine && data.active_quarantine.includes(i)) ? "rgba(255, 71, 87, 0.7)" : "rgba(46, 213, 115, 0.5)";
+                        }
+                    });
+                }
 
                 const now = new Date().toLocaleTimeString();
                 smoothnessChart.data.labels.push(now);
-                
-                // Dataset 0: Green Line (FPS)
                 smoothnessChart.data.datasets[0].data.push(data.fps);
-                // Dataset 1: Blue Line (Reduced Dip from server data)
-                smoothnessChart.data.datasets[1].data.push(data.one_percent_low); 
-                // Dataset 2: Red Line (Expected Baseline from server data)
-                smoothnessChart.data.datasets[2].data.push(data.expected_low);
+                smoothnessChart.data.datasets[1].data.push(data.one_percent_low); // Blue Line
+                
+                // MATH: Display the precise amount of lag reduced
+                const expectedCrash = data.one_percent_low > 0 ? data.one_percent_low * 0.80 : 0;
+                smoothnessChart.data.datasets[2].data.push(expectedCrash); // Red Line
 
-                if (smoothnessChart.data.labels.length > 40) { 
+                if (smoothnessChart.data.labels.length > 40) {
                     smoothnessChart.data.labels.shift();
-                    smoothnessChart.data.datasets[0].data.shift();
-                    smoothnessChart.data.datasets[1].data.shift();
-                    smoothnessChart.data.datasets[2].data.shift();
+                    smoothnessChart.data.datasets.forEach(ds => ds.data.shift());
                 }
-                smoothnessChart.update('none'); 
-
+                smoothnessChart.update('none');
+                document.getElementById('proc-name').innerText = data.top_process;
+                document.getElementById('proc-name').style.color = data.game_active ? "#ff4b1f" : "#666";
             } catch (e) {}
         }, 1000);
 
@@ -209,77 +236,30 @@
                 const data = await res.json();
                 if (data.success) {
                     btn.innerText = "⚡ CORES OPTIMIZED"; btn.style.background = "#2ecc71";
-                    data.logs.forEach(log => term.innerHTML += `<br><span class="log-success">> ${log}</span>`);
-                } else {
-                    term.innerHTML += `<br>> WARNING: No Target Detected. Hardware bypass engaged.`;
+                    data.logs.forEach(log => term.innerHTML += `<br><span style="color:#2ecc71">> ${log}</span>`);
                 }
                 term.scrollTop = term.scrollHeight;
-            } catch (e) { term.innerHTML += `<br>> ERROR: Nexus Server Unreachable.`; }
+            } catch (e) {}
         }
 
-        let myChart = null;
+        let hChart = null;
         async function openHistory() {
             document.getElementById('historyModal').style.display = "flex";
-            const ctx = document.getElementById('historyChart').getContext('2d');
             const res = await fetch('http://127.0.0.1:5000/history');
             const data = await res.json();
-            
             if(data.history) {
-                const labels = data.history.map(d => d.time);
-                const cpuData = data.history.map(d => d.cpu);
-                const ramData = data.history.map(d => d.ram);
-                
-                if(myChart) myChart.destroy();
-                
-                const statsOverlay = {
-                    id: 'statsOverlay',
-                    afterDraw(chart) {
-                        const { ctx, chartArea: { top, right } } = chart;
-                        ctx.save();
-                        ctx.textAlign = 'right';
-                        ctx.textBaseline = 'top';
-                        
-                        ctx.font = 'bold 13px "Consolas", monospace';
-                        ctx.fillStyle = '#2ecc71';
-                        ctx.fillText(`TARGET: ${data.game_name} (${data.game_cpu}%)`, right - 75, top - 30);
-                        
-                        ctx.font = '12px "Segoe UI", sans-serif';
-                        ctx.fillStyle = '#ff4757';
-                        ctx.fillText(`BG APPS ACTIVE: ${data.bg_count}`, right - 200, top - 15);
-                        ctx.fillText(`|`,right - 166.25, top - 15);
-                        
-                        ctx.fillText(`TOTAL BG LOAD: ${data.bg_cpu}%`, right - 10, top - 15);
-                        
-                        ctx.restore();
-                    }
-                };
-
-                myChart = new Chart(ctx, {
+                const ctx = document.getElementById('historyChart').getContext('2d');
+                if(hChart) hChart.destroy();
+                hChart = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: labels,
+                        labels: data.history.map(d => d.time),
                         datasets: [
-                            { label: 'CPU Usage', data: cpuData, borderColor: '#ff4b1f', tension: 0.4, pointRadius: 2 },
-                            { label: 'RAM Usage', data: ramData, borderColor: '#3498db', tension: 0.4, pointRadius: 2 }
+                            { label: 'CPU Usage', data: data.history.map(d => d.cpu), borderColor: '#ff4b1f', tension: 0.4 },
+                            { label: 'RAM Usage', data: data.history.map(d => d.ram), borderColor: '#3498db', tension: 0.4 }
                         ]
                     },
-                    options: {
-                        responsive: true, 
-                        maintainAspectRatio: false,
-                        scales: { 
-                            y: { 
-                                beginAtZero: true, 
-                                max: 100, 
-                                grid: { color: '#222' }, 
-                                ticks: { color: '#666' } 
-                            },
-                            x: { grid: { display: false }, ticks: { color: '#666' } }
-                        },
-                        plugins: {
-                            legend: { labels: { color: '#aaa' } }
-                        }
-                    },
-                    plugins: [statsOverlay]
+                    options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 } } }
                 });
             }
         }

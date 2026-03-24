@@ -1,8 +1,9 @@
 import psutil
 import os
 
-# Detect total threads dynamically for any system (12 for your Ryzen 6600H)
+# --- DYNAMIC HARDWARE DETECTION ---
 TOTAL_THREADS = psutil.cpu_count(logical=True)
+SAFE_THRESHOLD = 80.0  # AI Overflow Trigger
 
 # 1. The "Victims"
 BACKGROUND_HOGS = ["chrome.exe", "discord.exe", "spotify.exe", "teams.exe", "edge.exe", "browser.exe"]
@@ -10,80 +11,72 @@ BACKGROUND_HOGS = ["chrome.exe", "discord.exe", "spotify.exe", "teams.exe", "edg
 # 2. The "VIPs"
 GAMES = ["valorant.exe", "csgo.exe", "dota2.exe", "minecraft.exe", "gta5.exe", "code.exe", "eldenring.exe"]
 
+# NEW: Dynamic Pool for Overflow (Last 4 threads: 11, 10, 9, 8)
+QUARANTINE_POOL = list(range(TOTAL_THREADS - 1, TOTAL_THREADS - 5, -1))
+
+def get_active_quarantine_mask():
+    """AI Load Monitor: Expands the mask if usage hits 80%"""
+    per_core_usage = psutil.cpu_percent(interval=None, percpu=True)
+    active_mask = []
+    
+    for core_idx in QUARANTINE_POOL:
+        active_mask.append(core_idx)
+        # If the current core is breathing easy (<80%), we don't need the next one
+        if per_core_usage[core_idx] < SAFE_THRESHOLD:
+            break
+    return active_mask
+
 def set_high_priority_and_affinity(pid, is_game=True):
     try:
         p = psutil.Process(pid)
-        
         if is_game:
-            # Set to HIGH PRIORITY
             p.nice(psutil.HIGH_PRIORITY_CLASS)
-            
-            # PIN TO PERFORMANCE CORES (Use all cores EXCEPT the last two)
-            # This ensures the game has a massive clear highway.
-            performance_cores = list(range(0, TOTAL_THREADS - 2))
+            # Reserve Cores 0-7 for Game
+            performance_cores = list(range(0, TOTAL_THREADS - 4))
             p.cpu_affinity(performance_cores)
-            return True, f"SET_TO_HIGH_CORES: {performance_cores}"
+            return True, f"GAME_BOOST: {performance_cores}"
         else:
-            # Set to IDLE PRIORITY (Lowest)
             p.nice(psutil.IDLE_PRIORITY_CLASS)
-            
-            # PIN TO THE VERY LAST LOGICAL THREAD (e.g., Core 11)
-            # We use the highest index to keep them far from Core 0.
-            efficiency_core = [TOTAL_THREADS - 1]
-            p.cpu_affinity(efficiency_core)
-            return True, f"SET_TO_LOW_CORE: {efficiency_core}"
-    except Exception as e:
-        return False, str(e)
+            # Use Dynamic Overflow Mask
+            target_mask = get_active_quarantine_mask()
+            p.cpu_affinity(target_mask)
+            return True, f"BG_ISOLATED: {target_mask}"
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False, "Access Denied"
 
-def throttle_background_apps(game_pid=None):
+def throttle_background_apps():
     throttled_count = 0
-    # Capture every process running on Windows
+    current_mask = get_active_quarantine_mask() # AI decides mask size here
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            pid = proc.info['pid']
-            name = proc.info['name']
-            
-            # CORE LOGIC: If it's NOT the game and NOT a critical system process, isolate it
-            if pid != game_pid and name != "System Idle Process" and pid != os.getpid():
-                # Set to IDLE priority and move to the last logical thread (Core 11)
-                p = psutil.Process(pid)
-                p.nice(psutil.IDLE_PRIORITY_CLASS)
-                p.cpu_affinity([TOTAL_THREADS - 1]) 
-                throttled_count += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return throttled_count
+            if proc.info['name'].lower() in BACKGROUND_HOGS:
+                # Reuse our dynamic affinity logic
+                success, msg = set_high_priority_and_affinity(proc.info['pid'], is_game=False)
+                if success: throttled_count += 1
+        except: continue
+    return throttled_count, current_mask
 
 def optimize_game():
     game_found = None
     game_name = "Unknown"
-    
     for proc in psutil.process_iter(['pid', 'name']):
         try:
             if proc.info['name'].lower() in GAMES:
                 game_found = proc
                 game_name = proc.info['name']
                 break
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+        except: continue
 
     log = []
     if game_found:
         pid = game_found.info['pid']
+        set_high_priority_and_affinity(pid, is_game=True)
         
-        # 1. Boost the Game
-        success, msg = set_high_priority_and_affinity(pid, is_game=True)
-        if success:
-            log.append(f"CORE_REMAP: '{game_name}' moved to Cores 0-{TOTAL_THREADS-3}.")
-            log.append(f"PRIORITY_BOOST: '{game_name}' set to HIGH.")
-        else:
-            log.append(f"ACCESS_DENIED: Run as Administrator to unlock core pinning.")
+        # New: Capture the count AND the active mask for the terminal log
+        count, active_cores = throttle_background_apps()
         
-        # 2. Quarantine Background Apps
-        count = throttle_background_apps()
-        if count > 0:
-            log.append(f"QUARANTINE: {count} apps pushed to Core {TOTAL_THREADS-1}.")
-            
+        log.append(f"STABILITY_MODE: 80% HEADROOM GUARD ACTIVE")
+        log.append(f"CLEANUP: {count} apps on Cores {active_cores}")
         return True, log
     else:
-        return False, ["WAITING_FOR_TARGET: Engage AI Core Pinning by launching a game."]
+        return False, ["WAITING_FOR_TARGET: Launch a game to engage AI."]
