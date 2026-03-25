@@ -1,12 +1,11 @@
 import sqlite3
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-import pickle # Changed from joblib for better server compatibility
+import pickle
 import os
 
-# Updated to use absolute path to ensure the file is created in the correct folder
 DB_PATH = os.path.join(os.path.dirname(__file__), '../database/nexus_real_data.db')
-MODEL_PATH = r'D:\RyzenNexus_1 (2)\RyzenNexus_1\engine\nexus_model.pkl'
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "nexus_model.pkl")
 
 def train_nexus_ai():
     # 1. Load data from your real sessions
@@ -15,9 +14,7 @@ def train_nexus_ai():
         return
 
     conn = sqlite3.connect(DB_PATH)
-    # Using the columns that match your existing db_manager schema
     try:
-        # UPDATED: Added 'ORDER BY id DESC LIMIT 5000' to focus on your latest gaming patterns
         query = "SELECT cpu_usage, ram_usage, network_recv, is_game_active FROM telemetry ORDER BY id DESC LIMIT 5000"
         df = pd.read_sql_query(query, conn)
     except Exception as e:
@@ -39,7 +36,10 @@ def train_nexus_ai():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X, y)
 
-    # 4. Save the Model using pickle protocol 4 for maximum compatibility
+    # ✅ ADD THIS LINE
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+
+    # 4. Save the Model
     with open(MODEL_PATH, 'wb') as f:
         pickle.dump(model, f, protocol=4)
         
